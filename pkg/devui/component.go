@@ -1,6 +1,10 @@
 package devui
 
-import "gitlab.com/tz/tzui/pkg/tzui"
+import "gitlab.com/tz/tzui"
+
+const (
+	dataTableTzComponentName = "data_table"
+)
 
 var (
 	_ tzui.ITzComponent = DataTableTzComponent{}
@@ -8,13 +12,13 @@ var (
 
 // DataTable
 var (
-	DataTable = func(source string) *DataTableTzComponent {
+	DataTable = func() *DataTableTzComponent {
 		return &DataTableTzComponent{
-			DataSourceURL: source,
+			TzComponent: tzui.TzComponent{Name: dataTableTzComponentName},
 		}
 	}
-	HeaderFixedDataTable = func(source string) *DataTableTzComponent {
-		cmp := DataTable(source)
+	HeaderFixedDataTable = func() *DataTableTzComponent {
+		cmp := DataTable()
 		cmp.FixHeader = true
 		cmp.ContainFixHeaderHeight = true
 		return cmp
