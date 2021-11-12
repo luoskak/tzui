@@ -1,5 +1,7 @@
 package tzui
 
+import "context"
+
 var (
 	BaseTzComponent = func(name string, child ...ITzComponent) *TzComponent {
 		return &TzComponent{Name: name, Children: child}
@@ -10,6 +12,15 @@ type TzComponent struct {
 	// 使用snacked name命名
 	Name     string         `json:"name"`
 	Children []ITzComponent `json:"children"`
+	Sources  []*TzSource    `json:"sources"`
+}
+
+type TzSource struct {
+	Name        string
+	URL         string
+	initialized bool
+	Binder      Binder  `json:"-"`
+	Handler     Handler `json:"-"`
 }
 
 func (c TzComponent) ComponentName() string {
@@ -17,8 +28,6 @@ func (c TzComponent) ComponentName() string {
 }
 
 type ITzComponent interface {
-	IReq
-	IRes
 	IName
 }
 
@@ -26,20 +35,10 @@ type IName interface {
 	ComponentName() string
 }
 
-type HasSourceComponent interface {
-	SetSource(source string)
-}
+type Binder func(body []byte) (interface{}, error)
 
-type IReq interface {
-	// ReqStr return request struct with default value
-	ReqStr() interface{}
-}
-
-type IRes interface {
-	// ResStr return response struct with default value
-	ResStr() interface{}
-}
+type Handler func(ctx context.Context, req interface{}) (interface{}, error)
 
 type IParseTag interface {
-	ParseTag([]*Field)
+	ParseTag([]*Field, *TagManager)
 }

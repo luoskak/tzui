@@ -30,6 +30,14 @@ func casedCommonInitialisms(initialism string) string {
 	return string(append([]rune{top}, old[1:]...))
 }
 
+func CasedName(name string) string {
+	name = commonInitialisCasedReplacer.Replace(name)
+	old := []rune(name)
+	top := old[0]
+	top += 'a' - 'A'
+	return string(append([]rune{top}, old[1:]...))
+}
+
 func SnackedName(name string) string {
 	if name == "" {
 		return ""

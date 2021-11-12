@@ -3,15 +3,17 @@ package devui
 import (
 	"context"
 	"fmt"
-	"reflect"
+	"strings"
 
 	"gitlab.com/tz/tzui"
+	"gitlab.com/tz/tzui/pkg/utils"
 )
 
+var json = utils.JsonAPI
+
 var (
-	_ tzui.HasSourceComponent        = &DataTableTzComponent{}
-	_ tzui.HasSourceComponentBuilder = &dataTableTzComponentBuilder{}
-	_ tzui.ITzComponentBuilder       = &dataTableTzComponentBuilder{}
+	_ tzui.IParseTag           = &DataTableTzComponent{}
+	_ tzui.ITzComponentBuilder = &dataTableTzComponentBuilder{}
 )
 
 // tzui tags:
@@ -21,7 +23,6 @@ var (
 // - width 单元格固定长度
 type DataTableTzComponent struct {
 	tzui.TzComponent
-	DataSourceURL          string             `json:"dataSourceUrl"`
 	Scrollable             bool               `json:"scrollable"`
 	Type                   string             `json:"type"`
 	TableHeight            string             `json:"tableHeight"`
@@ -40,18 +41,23 @@ type TableWidthConfig struct {
 type TableOption struct {
 	Field  string `json:"field"`
 	Header string `json:"header"`
-	// typ 'text' | ''
+	// typ 'text' | 'enum' 'dic' enum不显示value,dic显示[id]
 	FieldType string `json:"fieldType"`
+	EnumName  string
 	// exp 120px
 	FixedLeft     string `json:"fixedLeft"`
 	ResizeEnabled bool   `json:"resizeEnable"`
+	Sortable      bool
 }
 
 type DataTableSourceRequest struct {
-	Where   map[string]interface{} `json:"where"`
-	Total   int64                  `json:"total"`
-	PerPage int                    `json:"perPage"`
-	Page    int                    `json:"page"`
+	Where map[string]interface{} `json:"where"`
+	// sort config exp. [][]string{[]string{'name','desc'}}
+	// 使用前必须在结构项加上tag sortable 否则会被前端过滤
+	Sort    [][]string
+	Total   int64 `json:"total"`
+	PerPage int   `json:"perPage"`
+	Page    int   `json:"page"`
 }
 
 func (req *DataTableSourceRequest) Data(data interface{}) *DataTableSourceResponse {
@@ -63,6 +69,57 @@ func (req *DataTableSourceRequest) Data(data interface{}) *DataTableSourceRespon
 	}
 }
 
+func (req *DataTableSourceRequest) Bind(body []byte) (interface{}, error) {
+	err := json.Unmarshal(body, req)
+	// 将sort的字段都转换成符合数据库命名规范
+	var sorts [][]string
+	for _, sort := range req.Sort {
+		if len(sort) == 0 {
+			continue
+		}
+		name := utils.SnackedName(sort[0])
+		direction := "ASC"
+		if len(sort) == 2 && sort[1] != "" {
+			direction = strings.ToUpper(sort[1])
+		}
+		if direction != "ASC" && direction != "DESC" {
+			return nil, fmt.Errorf("sort %s set but %s is not support", sort[0], sort[1])
+		}
+		sorts = append(sorts, []string{name, direction})
+	}
+	req.Sort = sorts
+	// 将where的字段都转换成符合数据库命名规范
+	var convertWhere func(src map[string]interface{}) map[string]interface{}
+	convertWhere = func(src map[string]interface{}) map[string]interface{} {
+		where := make(map[string]interface{})
+		for n, v := range src {
+			sub, ok := v.(map[string]interface{})
+			if !ok {
+				// 不符合要求的过滤了
+				continue
+			}
+			subWhere := make(map[string]interface{})
+			for sn, sv := range sub {
+				tn := strings.ToUpper(sn)
+				if tn == "OR" ||
+					tn == "AND" {
+					if sm, is := sv.(map[string]interface{}); is {
+						subWhere[tn] = convertWhere(sm)
+					}
+					continue
+				}
+				subWhere[utils.SnackedName(sn)] = sv
+			}
+			where[utils.SnackedName(n)] = v
+		}
+		return where
+	}
+
+	req.Where = convertWhere(req.Where)
+
+	return req, err
+}
+
 type DataTableSourceResponse struct {
 	Total   int64       `json:"total"`
 	PerPage int         `json:"perPage"`
@@ -70,24 +127,8 @@ type DataTableSourceResponse struct {
 	Data    interface{} `json:"data"`
 }
 
-// ReqStr return request struct with default value
-func (t DataTableTzComponent) ReqStr() interface{} {
-	return &DataTableSourceRequest{
-		Total: 50,
-	}
-}
-
-// ResStr return response struct with default value
-func (t DataTableTzComponent) ResStr() interface{} {
-	return &DataTableSourceResponse{Total: 50}
-}
-
-func (t *DataTableTzComponent) SetSource(source string) {
-	t.DataSourceURL = source
-}
-
 // ParseTag parse tags setting
-func (t *DataTableTzComponent) ParseTag(fields []*tzui.Field) {
+func (t *DataTableTzComponent) ParseTag(fields []*tzui.Field, tm *tzui.TagManager) {
 	for _, field := range fields {
 		to := TableOption{
 			Field: field.CasedName(),
@@ -99,7 +140,16 @@ func (t *DataTableTzComponent) ParseTag(fields []*tzui.Field) {
 		}
 		to.Header = header
 		if fieldType, ok := field.Tags["fieldType"]; ok {
-			to.FieldType = fieldType
+			split := strings.Split(fieldType, ":")
+			if len(split) == 1 {
+
+				continue
+			}
+			to.FieldType = split[0]
+			if split[0] == "enum" || split[0] == "dic" {
+				to.EnumName = split[1]
+				tm.GetTag("dictionary").IsValid(to.EnumName)
+			}
 		} else {
 			to.FieldType = "text"
 		}
@@ -110,6 +160,9 @@ func (t *DataTableTzComponent) ParseTag(fields []*tzui.Field) {
 			if resizeEnabled == "true" {
 				to.ResizeEnabled = true
 			}
+		}
+		if _, ok := field.Tags["sortable"]; ok {
+			to.Sortable = true
 		}
 		if width, ok := field.Tags["width"]; ok {
 			t.TableWidthConfig = append(t.TableWidthConfig, TableWidthConfig{
@@ -122,29 +175,41 @@ func (t *DataTableTzComponent) ParseTag(fields []*tzui.Field) {
 				Width: "80px",
 			})
 		}
-
+		t.TableOptions = append(t.TableOptions, to)
 	}
 }
 
 type dataTableTzComponentBuilder struct {
-	model  interface{}
-	source func(ctx context.Context, req *DataTableSourceRequest) (res *DataTableSourceResponse, err error)
-	typ    func() *DataTableTzComponent
+	model   interface{}
+	typ     func() *DataTableTzComponent
+	sources []*tzui.TzSource
 }
 
 func NewDataTableBuilder(model interface{}, source func(ctx context.Context, req *DataTableSourceRequest) (res *DataTableSourceResponse, err error), build func() *DataTableTzComponent) tzui.ITzComponentBuilder {
 	if source == nil {
 		panic("source can not be empty")
 	}
+	modelPkgPath := utils.GetPkgPath(model)
+	fetchSource := &tzui.TzSource{
+		Name:   "fetch",
+		URL:    "fetch/" + modelPkgPath,
+		Binder: (&DataTableSourceRequest{}).Bind,
+		Handler: func(ctx context.Context, req interface{}) (interface{}, error) {
+			return source(ctx, req.(*DataTableSourceRequest))
+		},
+	}
+
 	return &dataTableTzComponentBuilder{
-		model:  model,
-		source: source,
-		typ:    build,
+		model:   model,
+		sources: []*tzui.TzSource{fetchSource},
+		typ:     build,
 	}
 }
 
 func (b dataTableTzComponentBuilder) Build() tzui.ITzComponent {
-	return b.typ()
+	c := b.typ()
+	c.Sources = b.Sources()
+	return c
 }
 
 func (b dataTableTzComponentBuilder) Model() interface{} {
@@ -155,11 +220,6 @@ func (b dataTableTzComponentBuilder) ComponentName() string {
 	return dataTableTzComponentName
 }
 
-func (b *dataTableTzComponentBuilder) Handler(ctx context.Context, req interface{}) (interface{}, error) {
-	return b.source(ctx, req.(*DataTableSourceRequest))
-}
-
-func (b dataTableTzComponentBuilder) SourceURL() string {
-	sourceType := reflect.TypeOf(b.source)
-	return fmt.Sprintf("%s/%s", sourceType.PkgPath(), sourceType.Name())
+func (b dataTableTzComponentBuilder) Sources() []*tzui.TzSource {
+	return b.sources
 }
