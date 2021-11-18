@@ -14,10 +14,12 @@ type dictionaryBuilder struct {
 
 type dictionary struct {
 	name    string
-	handler Handler
+	handler DictionaryHandler
 }
 
-func (dbuild *dictionaryBuilder) AddDictionary(name string, handler Handler) *dictionaryBuilder {
+type DictionaryHandler func(ctx context.Context, req *TzDictionaryRequest) (interface{}, error)
+
+func (dbuild *dictionaryBuilder) AddDictionary(name string, handler DictionaryHandler) *dictionaryBuilder {
 	_, duplicated := dbuild.dics[name]
 	if duplicated {
 		panic(fmt.Sprintf("duplicated add dictionary %s for sub %s", name, dbuild.sub))
@@ -51,6 +53,8 @@ func (dbuild *dictionaryBuilder) ResolveMethods(register func(route, name, desc 
 	})
 	for _, dic := range dics {
 		d := dbuild.dics[dic.Name]
-		register(strings.TrimPrefix(dic.URL, dbuild.root), d.name, "字典", nil, d.handler)
+		register(strings.TrimPrefix(dic.URL, dbuild.root), d.name, "字典", (&TzDictionaryRequest{}).Bind, func(ctx context.Context, req interface{}) (interface{}, error) {
+			return d.handler(ctx, req.(*TzDictionaryRequest))
+		})
 	}
 }

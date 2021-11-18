@@ -42,8 +42,9 @@ type TableOption struct {
 	Field  string `json:"field"`
 	Header string `json:"header"`
 	// typ 'text' | 'enum' 'dic' enum不显示value,dic显示[id]
-	FieldType string `json:"fieldType"`
-	EnumName  string
+	FieldType   string `json:"fieldType"`
+	EnumName    string
+	Placeholder string //当数据为空时填充值
 	// exp 120px
 	FixedLeft     string `json:"fixedLeft"`
 	ResizeEnabled bool   `json:"resizeEnable"`
@@ -141,14 +142,14 @@ func (t *DataTableTzComponent) ParseTag(fields []*tzui.Field, tm *tzui.TagManage
 		to.Header = header
 		if fieldType, ok := field.Tags["fieldType"]; ok {
 			split := strings.Split(fieldType, ":")
-			if len(split) == 1 {
-
-				continue
-			}
 			to.FieldType = split[0]
-			if split[0] == "enum" || split[0] == "dic" {
-				to.EnumName = split[1]
-				tm.GetTag("dictionary").IsValid(to.EnumName)
+			if len(split) > 1 {
+				if split[0] == "enum" || split[0] == "dic" {
+					to.EnumName = split[1]
+					tm.GetTag("dictionary").IsValid(to.EnumName)
+				} else if split[0] == "text" {
+					to.Placeholder = split[1]
+				}
 			}
 		} else {
 			to.FieldType = "text"
