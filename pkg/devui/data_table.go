@@ -45,10 +45,13 @@ type TableOption struct {
 	FieldType   string `json:"fieldType"`
 	EnumName    string
 	Placeholder string //当数据为空时填充值
+	// form search or datePicker, dateRangePicker
+	Form string
 	// exp 120px
 	FixedLeft     string `json:"fixedLeft"`
 	ResizeEnabled bool   `json:"resizeEnable"`
 	Sortable      bool
+	Sort          string
 }
 
 type DataTableSourceRequest struct {
@@ -109,6 +112,19 @@ func (req *DataTableSourceRequest) Bind(body []byte) (interface{}, error) {
 					}
 					continue
 				}
+				if tn == "BETWEEN" {
+					if vs, is := sv.([]interface{}); is {
+						subWhere[tn] = vs
+					}
+					if vs, is := sv.([]string); is {
+						var ds []interface{}
+						for _, v := range vs {
+							ds = append(ds, v)
+						}
+						subWhere[tn] = ds
+					}
+					continue
+				}
 				subWhere[utils.SnackedName(sn)] = sv
 			}
 			where[utils.SnackedName(n)] = v
@@ -162,8 +178,15 @@ func (t *DataTableTzComponent) ParseTag(fields []*tzui.Field, tm *tzui.TagManage
 				to.ResizeEnabled = true
 			}
 		}
-		if _, ok := field.Tags["sortable"]; ok {
+		if form, ok := field.Tags["form"]; ok && len(form) > 0 {
+			to.Form = form
+		}
+		if sort, ok := field.Tags["sort"]; ok {
 			to.Sortable = true
+			up := strings.ToUpper(sort)
+			if up == "ASC" || up == "DESC" {
+				to.Sort = up
+			}
 		}
 		if width, ok := field.Tags["width"]; ok {
 			t.TableWidthConfig = append(t.TableWidthConfig, TableWidthConfig{
