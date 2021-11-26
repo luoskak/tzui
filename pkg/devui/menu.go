@@ -9,13 +9,15 @@ const (
 )
 
 type MenuItem struct {
-	ID       int         `json:"id"`
-	Title    string      `json:"title"`
-	Link     string      `json:"link,omitempty"`
-	LinkType LinkType    `json:"linkType,omitempty"`
-	Disabled bool        `json:"disabled,omitempty"`
-	MenuIcon Icon        `json:"menuIcon,omitempty"`
-	Children []*MenuItem `json:"children,omitempty"`
+	ID        int         `json:"id"`
+	Title     string      `json:"title"`
+	Link      string      `json:"link,omitempty"`
+	LinkType  LinkType    `json:"linkType,omitempty"`
+	Disabled  bool        `json:"disabled,omitempty"`
+	Immutable bool        `json:"immutable,omitempty"`
+	Index     int         `json:"index`
+	MenuIcon  Icon        `json:"menuIcon,omitempty"`
+	Children  []*MenuItem `json:"children,omitempty"`
 }
 
 func NewMenuItem() *MenuItem {
