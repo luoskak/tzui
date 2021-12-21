@@ -23,4 +23,9 @@ var (
 		cmp.ContainFixHeaderHeight = true
 		return cmp
 	}
+	AutoTotalRowHeaderFixedDataTable = func() *DataTableTzComponent {
+		cmp := HeaderFixedDataTable()
+		cmp.AutoAddTotalRow = true
+		return cmp
+	}
 )

@@ -37,6 +37,7 @@ func init() {
 	JsonAPI = jsoniter.Config{
 		EscapeHTML:    true,
 		CaseSensitive: true,
+		UseNumber:     true,
 	}.Froze()
 	JsonAPI.RegisterExtension(&JSONExtension{})
 }

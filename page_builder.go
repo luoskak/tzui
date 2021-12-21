@@ -83,7 +83,11 @@ func (pbuild *pageBuilder) AddTzComponent(cbuild ITzComponentBuilder) *pageBuild
 	}
 	cmp := cbuild.Build()
 	if app, ok := cmp.(IParseTag); ok {
-		app.ParseTag(fields, pbuild.cbuild.tagManager)
+		var tm *TagManager
+		if pbuild.cbuild != nil {
+			tm = pbuild.cbuild.tagManager
+		}
+		app.ParseTag(fields, tm)
 	}
 
 	cacheComponentStore.Store(pageName, cmp)
@@ -95,6 +99,6 @@ type TzPage struct {
 	TzComponent
 }
 
-func (pbuild *pageBuilder) handle(ctx context.Context, req interface{}) (interface{}, error) {
+func (pbuild *pageBuilder) Handle(ctx context.Context, req interface{}) (interface{}, error) {
 	return pbuild.build(), nil
 }

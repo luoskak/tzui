@@ -15,7 +15,7 @@ func ParseTagSetting(str string, sep string) map[string]string {
 		if len(values) >= 2 {
 			settings[k] = strings.Join(values[1:], ":")
 		} else if k != "" {
-			settings[k] = k
+			settings[k] = ""
 		}
 	}
 

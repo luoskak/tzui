@@ -3,6 +3,8 @@ package devui
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"strconv"
 	"strings"
 
 	"gitlab.com/tz/tzui"
@@ -23,19 +25,21 @@ var (
 // - width 单元格固定长度
 type DataTableTzComponent struct {
 	tzui.TzComponent
-	Scrollable             bool               `json:"scrollable"`
-	Type                   string             `json:"type"`
-	TableHeight            string             `json:"tableHeight"`
-	VirtualScroll          bool               `json:"virtualScroll"`
-	FixHeader              bool               `json:"fixHeader"`
-	ContainFixHeaderHeight bool               `json:"containFixHeaderHeight"`
+	Scrollable             bool   `json:"scrollable"`
+	Type                   string `json:"type"`
+	TableHeight            string `json:"tableHeight"`
+	VirtualScroll          bool   `json:"virtualScroll"`
+	FixHeader              bool   `json:"fixHeader"`
+	ContainFixHeaderHeight bool   `json:"containFixHeaderHeight"`
+	AutoAddTotalRow        bool
 	TableWidthConfig       []TableWidthConfig `json:"tableWidthConfig"`
 	TableOptions           []TableOption      `json:"tableOptions"`
 }
 
 type TableWidthConfig struct {
-	Field string `json:"field"`
-	Width string `json:"width"`
+	Field    string `json:"field"`
+	Width    string `json:"width"`
+	widthNum int
 }
 
 type TableOption struct {
@@ -52,6 +56,8 @@ type TableOption struct {
 	ResizeEnabled bool   `json:"resizeEnable"`
 	Sortable      bool
 	Sort          string
+	// 百分比
+	Percent string
 }
 
 type DataTableSourceRequest struct {
@@ -73,7 +79,99 @@ func (req *DataTableSourceRequest) Data(data interface{}) *DataTableSourceRespon
 	}
 }
 
-func (req *DataTableSourceRequest) Bind(body []byte) (interface{}, error) {
+// Slice directly return when data is nil and data type is not slice
+func (req *DataTableSourceRequest) Slice(data interface{}) (res *DataTableSourceResponse) {
+	res = &DataTableSourceResponse{
+		Total:   req.Total,
+		PerPage: req.PerPage,
+		Page:    req.Page,
+	}
+	if data == nil {
+		return
+	}
+	if req.Page == 0 || req.PerPage == 0 {
+		return
+	}
+	rv := reflect.ValueOf(data)
+	rt := rv.Type()
+	if rt.Kind() != reflect.Slice {
+		panic("slice kind required")
+	}
+	total := rv.Len()
+	from := (req.Page - 1) * req.PerPage
+	to := req.Page * req.PerPage
+	if from > total {
+		return
+	}
+	if from < total && to > total {
+		res.Data = rv.Slice(from, total).Interface()
+		return
+	}
+	res.Data = rv.Slice(from, to).Interface()
+	return
+}
+
+func (req *DataTableSourceRequest) WhereGet(snackedName string, equality string) (interface{}, bool) {
+	if snackedName == "" {
+		panic("snacked name can not be empty")
+	}
+	if equality == "" {
+		panic("equality can not be empty")
+	}
+	fwi, ok := req.Where[snackedName]
+	if !ok {
+		return nil, false
+	}
+	fw := fwi.(map[string]interface{})
+	equality = strings.ToUpper(equality)
+	if equality == "OR" || equality == "AND" {
+		panic("unsupported equality")
+	}
+	wvi, ok := fw[equality]
+	if !ok {
+		return nil, false
+	}
+	return wvi, true
+}
+
+func (req *DataTableSourceRequest) WhereFind(snackedNames ...string) map[string]interface{} {
+	if len(snackedNames) == 0 {
+		return req.Where
+	}
+	return findWhere(req.Where, snackedNames...)
+}
+
+func findWhere(src map[string]interface{}, snackedNames ...string) map[string]interface{} {
+	where := make(map[string]interface{})
+
+	for n, v := range src {
+		used := false
+		for _, fsn := range snackedNames {
+			if n == fsn {
+				used = true
+				break
+			}
+		}
+		if !used {
+			continue
+		}
+		subWhere := make(map[string]interface{})
+		for sn, sv := range v.(map[string]interface{}) {
+			if sn == "OR" ||
+				sn == "AND" {
+				subWhere[sn] = findWhere(sv.(map[string]interface{}), snackedNames...)
+				continue
+			}
+			subWhere[sn] = sv
+		}
+		where[n] = subWhere
+	}
+
+	return where
+}
+
+func (*DataTableSourceRequest) Bind(body []byte) (interface{}, error) {
+	req := new(DataTableSourceRequest)
 	err := json.Unmarshal(body, req)
 	// 将sort的字段都转换成符合数据库命名规范
 	var sorts [][]string
@@ -93,48 +191,73 @@ func (req *DataTableSourceRequest) Bind(body []byte) (interface{}, error) {
 	}
 	req.Sort = sorts
 	// 将where的字段都转换成符合数据库命名规范
-	var convertWhere func(src map[string]interface{}) map[string]interface{}
-	convertWhere = func(src map[string]interface{}) map[string]interface{} {
-		where := make(map[string]interface{})
-		for n, v := range src {
-			sub, ok := v.(map[string]interface{})
-			if !ok {
-				// 不符合要求的过滤了
-				continue
-			}
-			subWhere := make(map[string]interface{})
-			for sn, sv := range sub {
-				tn := strings.ToUpper(sn)
-				if tn == "OR" ||
-					tn == "AND" {
-					if sm, is := sv.(map[string]interface{}); is {
-						subWhere[tn] = convertWhere(sm)
-					}
-					continue
-				}
-				if tn == "BETWEEN" {
-					if vs, is := sv.([]interface{}); is {
-						subWhere[tn] = vs
-					}
-					if vs, is := sv.([]string); is {
-						var ds []interface{}
-						for _, v := range vs {
-							ds = append(ds, v)
-						}
-						subWhere[tn] = ds
-					}
-					continue
-				}
-				subWhere[utils.SnackedName(sn)] = sv
-			}
-			where[utils.SnackedName(n)] = v
-		}
-		return where
-	}
-
-	req.Where = convertWhere(req.Where)
+	where := convertWhere(req.Where)
+	req.Where = where
 
 	return req, err
+}
+
+func convertWhere(src map[string]interface{}) map[string]interface{} {
+	where := make(map[string]interface{})
+	for n, v := range src {
+		sub, ok := v.(map[string]interface{})
+		if !ok {
+			// 不符合要求的过滤了
+			continue
+		}
+		subWhere := make(map[string]interface{})
+		for sn, sv := range sub {
+			tn := strings.ToUpper(sn)
+			if tn == "OR" ||
+				tn == "AND" {
+				if sm, is := sv.(map[string]interface{}); is {
+					subWhere[tn] = convertWhere(sm)
+				}
+				continue
+			}
+			if tn == "BETWEEN" {
+				if vs, is := sv.([]interface{}); is {
+					if len(vs) != 2 {
+						continue
+					}
+					subWhere[tn] = vs
+				}
+				if vs, is := sv.([]string); is {
+					var ds []interface{}
+					for _, v := range vs {
+						ds = append(ds, v)
+					}
+					if len(ds) != 2 {
+						continue
+					}
+					subWhere[tn] = ds
+				}
+				continue
+			}
+			if tn == "IN" {
+				if vs, is := sv.([]interface{}); is {
+					if len(vs) == 0 {
+						continue
+					}
+					subWhere[tn] = vs
+				}
+				if vs, is := sv.([]string); is {
+					var ds []interface{}
+					for _, v := range vs {
+						ds = append(ds, v)
+					}
+					if len(ds) == 0 {
+						continue
+					}
+					subWhere[tn] = ds
+				}
+				continue
+			}
+			subWhere[sn] = sv
+		}
+		where[utils.SnackedName(n)] = subWhere
+	}
+	return where
 }
 
 type DataTableSourceResponse struct {
@@ -146,7 +269,7 @@ type DataTableSourceResponse struct {
 
 // ParseTag parse tags setting
 func (t *DataTableTzComponent) ParseTag(fields []*tzui.Field, tm *tzui.TagManager) {
-	for _, field := range fields {
+	for i, field := range fields {
 		to := TableOption{
 			Field: field.CasedName(),
 		}
@@ -156,13 +279,16 @@ func (t *DataTableTzComponent) ParseTag(fields []*tzui.Field, tm *tzui.TagManage
 			continue
 		}
 		to.Header = header
+
 		if fieldType, ok := field.Tags["fieldType"]; ok {
 			split := strings.Split(fieldType, ":")
 			to.FieldType = split[0]
 			if len(split) > 1 {
 				if split[0] == "enum" || split[0] == "dic" {
 					to.EnumName = split[1]
-					tm.GetTag("dictionary").IsValid(to.EnumName)
+					if tm != nil {
+						tm.GetTag("dictionary").IsValid(to.EnumName)
+					}
 				} else if split[0] == "text" {
 					to.Placeholder = split[1]
 				}
@@ -170,13 +296,55 @@ func (t *DataTableTzComponent) ParseTag(fields []*tzui.Field, tm *tzui.TagManage
 		} else {
 			to.FieldType = "text"
 		}
+
+		// 共享长度设置
+		var twc *TableWidthConfig
+		if width, ok := field.Tags["width"]; ok {
+			twc = &TableWidthConfig{
+				Field: field.CasedName(),
+				Width: width,
+			}
+			t.TableWidthConfig = append(t.TableWidthConfig, *twc)
+		} else {
+			twc = &TableWidthConfig{
+				Field:    field.CasedName(),
+				Width:    "80px",
+				widthNum: 80,
+			}
+			if to.FieldType == "date" ||
+				to.FieldType == "enum" ||
+				to.FieldType == "dic" {
+				twc.Width = "120px"
+				twc.widthNum = 120
+			} else {
+				// text
+				twc.widthNum = 12*len([]rune(to.Header)) + 40
+				twc.Width = strconv.Itoa(twc.widthNum) + "px"
+			}
+			t.TableWidthConfig = append(t.TableWidthConfig, *twc)
+		}
 		if fixedLeft, ok := field.Tags["fixedLeft"]; ok {
-			to.FixedLeft = fixedLeft
+			if len(fixedLeft) == 0 {
+				totalWidth := 0
+				if i > 0 {
+					for _, pre := range t.TableWidthConfig[:i] {
+						totalWidth += pre.widthNum
+					}
+				}
+
+				to.FixedLeft = strconv.Itoa(totalWidth) + "px"
+			} else {
+				to.FixedLeft = fixedLeft
+			}
 		}
 		if resizeEnabled, ok := field.Tags["resizeEnabled"]; ok {
-			if resizeEnabled == "true" {
+			if resizeEnabled == "false" {
+				to.ResizeEnabled = false
+			} else {
 				to.ResizeEnabled = true
 			}
+		} else {
+			to.ResizeEnabled = true
 		}
 		if form, ok := field.Tags["form"]; ok && len(form) > 0 {
 			to.Form = form
@@ -188,17 +356,10 @@ func (t *DataTableTzComponent) ParseTag(fields []*tzui.Field, tm *tzui.TagManage
 				to.Sort = up
 			}
 		}
-		if width, ok := field.Tags["width"]; ok {
-			t.TableWidthConfig = append(t.TableWidthConfig, TableWidthConfig{
-				Field: field.CasedName(),
-				Width: width,
-			})
-		} else {
-			t.TableWidthConfig = append(t.TableWidthConfig, TableWidthConfig{
-				Field: field.CasedName(),
-				Width: "80px",
-			})
+		if percent, ok := field.Tags["percent"]; ok {
+			to.Percent = percent
 		}
+
 		t.TableOptions = append(t.TableOptions, to)
 	}
 }

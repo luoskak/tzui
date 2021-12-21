@@ -7,6 +7,18 @@ import (
 
 var ErrUnsupportedModelType = errors.New("unsupported model type")
 
+func NewTzuiPageBuilder(root, sub string, name string) *pageBuilder {
+	sub = strings.TrimSpace(sub)
+	if root != "" {
+		sub = strings.TrimSpace(root) + "/" + sub
+	}
+	page := &pageBuilder{
+		name: name,
+		sub:  sub,
+	}
+	return page
+}
+
 func NewTzuiControllerBuilder(root, sub string, name, desc string) *controllerBuilder {
 	root = "/" + strings.TrimPrefix(root, "/")
 	c := &controllerBuilder{

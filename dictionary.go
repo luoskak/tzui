@@ -13,7 +13,8 @@ type TzDictionaryRequest struct {
 	Current int64
 }
 
-func (req *TzDictionaryRequest) Bind(body []byte) (interface{}, error) {
+func (*TzDictionaryRequest) Bind(body []byte) (interface{}, error) {
+	req := new(TzDictionaryRequest)
 	err := json.Unmarshal(body, req)
 	return req, err
 }

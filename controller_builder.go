@@ -41,7 +41,7 @@ func (cbuild controllerBuilder) ResolveMethods(register func(route, name, desc s
 			pageURL = "page" + "/" + pbuild.sub
 		}
 
-		register("/"+pageURL, cbuild.name, pbuild.name, nil, pbuild.handle)
+		register("/"+pageURL, cbuild.name, pbuild.name, nil, pbuild.Handle)
 
 		for _, c := range pbuild.components {
 			var rootPath string
